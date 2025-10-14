@@ -2,6 +2,13 @@ from chess import Board, Move, WHITE
 import math
 
 
+def pv_uniform_zero(board):
+    moves = list(board.legal_moves)
+    p = {m: 1.0 / len(moves) for m in moves} if moves else {}
+    v = 0.0  # [-1,1]
+    return p, v
+
+
 class Node:
     def __init__(self, board: Board):
         self.board = board
@@ -21,10 +28,10 @@ class Node:
             key=lambda e: e.Q
             + C * e.P * math.sqrt(parent_sum_N) / (1 + e.N),  # PUCT AlphaGo variant
         )
-    
+
     def is_terminal(self):
         return self.board.is_game_over()
-    
+
     def get_terminal_value(self) -> float:
         outcome = self.board.outcome()
         if outcome is None:  # not terminal
@@ -33,6 +40,7 @@ class Node:
             return 0.0
         # value from POV of side-to-move at this node
         return 1.0 if outcome.winner == self.board.turn else -1.0
+
 
 class Edge:
     def __init__(self, P, move):
@@ -47,24 +55,39 @@ class Edge:
         return self.W / self.N if self.N else 0.0
 
 
-class RootNode(Node):
-    def __init__(self, board: Board):
-        super().__init__(board)
+class MCTS:
+    def __init__(self, node: Node):
         # self.expand(dirichlet_noise_dict)--for training. will want to initialize edges from root to have dirichlet noise in prior probabilities
-        self.fn = 0 # TODO
+        self.fn = pv_uniform_zero  # TODO
+        self.root = node
 
-    def move(self):
-        best_edge = max(self.edges, key=lambda e: e.N)
+    def make_move(self, move: Move):
+        for edge in self.root.edges:
+            if edge.move == move:
+                if not edge.dest:
+                    b2 = self.root.board.copy()
+                    b2.push(edge.move)
+                    edge.dest = Node(b2)
+                self.root = edge.dest
+                return
+        # if edge not explored in root (first move or no simulations)
+        b2 = self.root.board.copy()
+        b2.push(move)
+        self.root =Node(b2)
+
+    def think_and_move(self, simulations: int): # simulations MUST be at least 1
+        self._run_simulations(simulations)
+        best_edge = max(self.root.edges, key=lambda e: e.N)
         # Make sure a child exists
         if not best_edge.dest:
-            b2 = self.board.copy()
+            b2 = self.root.board.copy()
             b2.push(best_edge.move)
             best_edge.dest = Node(b2)
-        return best_edge.move, best_edge.dest
+        self.make_move(best_edge.move)
 
-    def run_simulations(self, simulations: int):
+    def _run_simulations(self, simulations: int):
         for _ in range(simulations):
-            node = self
+            node = self.root
             edge_path = []
             while node.expanded and not node.is_terminal():
                 best_edge = node.get_best_edge()
@@ -78,13 +101,10 @@ class RootNode(Node):
             if node.is_terminal():
                 leaf_value = node.get_terminal_value()
             else:
-                # prior_dict, leaf_value = self.fn(node.board)
-                leaf_value = 0
-                prior_dict = {move: 0.05 for move in node.board.legal_moves}
+                prior_dict, leaf_value = self.fn(node.board)
                 node.expand(prior_dict)
-            
-            self._backpropogate(edge_path, leaf_value)
 
+            self._backpropogate(edge_path, leaf_value)
 
     def _backpropogate(self, edge_path: list[Edge], leaf_value: float):
         v = leaf_value

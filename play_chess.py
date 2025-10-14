@@ -1,11 +1,13 @@
 import chess
 import random
+from mcts import MCTS, Node
 
-board = chess.Board()
+root = Node(chess.Board())
+mcts = MCTS(root)
 human_turn = True
-while not board.is_game_over():
+while not mcts.root.board.is_game_over():
     if human_turn:
-        print(board)
+        print(mcts.root.board)
         print("--------------------------------")
         while True:
             moveStr = input("Enter your move: ")
@@ -14,12 +16,11 @@ while not board.is_game_over():
             except:
                 print("Invalid move, try again")
                 continue
-            if move not in board.legal_moves:
+            if move not in mcts.root.board.legal_moves:
                 print("Invalid move, try again")
                 continue
-            board.push(move)
+            mcts.make_move(move)
             break
     else:
-        move = random.choice(list(board.legal_moves))
-        board.push(move)
+        mcts.think_and_move(simulations=1)
     human_turn = not human_turn
