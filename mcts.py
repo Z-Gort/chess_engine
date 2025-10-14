@@ -1,24 +1,5 @@
-from __future__ import annotations
-from chess import Board, Move
+from chess import Board, Move, WHITE
 import math
-
-
-# dataclass for edge, save vals, has node that it ends at
-# node--board I suppose (though only needed for leaves...), edges
-# rootNode, inherits from node, has rollout method, init to have edges with noise
-class Edge:
-    def __init__(self, P: float, N: int, Q: float, move: Move, dest: Node):
-        self.P = P  # prior probability
-        self.N = N  # number of times visited
-        self.Q = Q  # action value
-        self.move = move
-        self.dest = dest
-
-    def get_UCT(self, parent_N: int):
-        # verify this is correct
-        C = 1.5  # Controls exploration. What should this be for training vs play?
-        UCT = self.Q + self.P * C * math.sqrt(parent_N) / (1 + self.N)
-        return UCT
 
 
 class Node:
@@ -27,52 +8,87 @@ class Node:
         self.edges: list[Edge] = []
         self.expanded = False
 
-    def expand(self):
+    def expand(self, prior_dict: dict[Move, float]):
         self.expanded = True
         for move in self.board.legal_moves:
-            new_board = self.board.copy()
-            new_board.push(move)
-            self.edges.append(Edge(P=0.05, N=0, Q=0.0, move=move, dest=Node(new_board)))
+            self.edges.append(Edge(P=prior_dict[move], move=move))
+
+    def get_best_edge(self):
+        parent_sum_N = 1 + sum(edge.N for edge in self.edges)
+        C = 1.5  # Controls exploration
+        return max(
+            self.edges,
+            key=lambda e: e.Q
+            + C * e.P * math.sqrt(parent_sum_N) / (1 + e.N),  # PUCT AlphaGo variant
+        )
+    
+    def is_terminal(self):
+        return self.board.is_game_over()
+    
+    def get_terminal_value(self) -> float:
+        outcome = self.board.outcome()
+        if outcome is None:  # not terminal
+            raise RuntimeError("Called get_terminal_value on non-terminal node")
+        if outcome.winner is None:
+            return 0.0
+        # value from POV of side-to-move at this node
+        return 1.0 if outcome.winner == self.board.turn else -1.0
+
+class Edge:
+    def __init__(self, P, move):
+        self.move = move
+        self.P = P
+        self.N: int = 0
+        self.W = 0.0
+        self.dest: Node | None = None
+
+    @property
+    def Q(self) -> float:
+        return self.W / self.N if self.N else 0.0
 
 
 class RootNode(Node):
     def __init__(self, board: Board):
         super().__init__(board)
-        self.expand()  # for training. will want to initialize edges from root to have dirichlet noise in prior probabilities
+        # self.expand(dirichlet_noise_dict)--for training. will want to initialize edges from root to have dirichlet noise in prior probabilities
+        self.fn = 0 # TODO
 
-    def make_move(self):
-        best_edge = self._get_best_edge(self, 1)
+    def move(self):
+        best_edge = max(self.edges, key=lambda e: e.N)
+        # Make sure a child exists
+        if not best_edge.dest:
+            b2 = self.board.copy()
+            b2.push(best_edge.move)
+            best_edge.dest = Node(b2)
         return best_edge.move, best_edge.dest
 
     def run_simulations(self, simulations: int):
-        expanded = 0
-        cur_node = self
-        parent_N = 1  # Just pass in 1 if we don't have a parent_N??
-        edge_path = []
-        while expanded < simulations:
-            if not cur_node.edges:  # draw, loss, win
-                break  # How to handle this??
-            best_edge = self._get_best_edge(cur_node, parent_N)
-            edge_path.append(best_edge)
-            parent_N = best_edge.N
-            cur_node = best_edge.dest
-            if not cur_node.expanded:
-                cur_node.expand()
-                simulations += 1
-                self._backpropogate(edge_path)
-                cur_node = self  # start a new simulation
+        for _ in range(simulations):
+            node = self
+            edge_path = []
+            while node.expanded and not node.is_terminal():
+                best_edge = node.get_best_edge()
+                edge_path.append(best_edge)
+                if not best_edge.dest:
+                    b2 = node.board.copy()
+                    b2.push(best_edge.move)
+                    best_edge.dest = Node(b2)
+                node = best_edge.dest
 
-    def _backpropogate(self, edge_path: list[Edge]):
-        # No idea what's going on here--verify this is correct
-        new_Q = 0.05  # This is not how this works
-        for i in range(len(edge_path), -1, -1):
-            edge = edge_path[i]
-            edge.N += 1
-            if (len(edge_path) - i) % 2 == 0:
-                edge.Q += new_Q
+            if node.is_terminal():
+                leaf_value = node.get_terminal_value()
             else:
-                edge.Q += 1 - new_Q
+                # prior_dict, leaf_value = self.fn(node.board)
+                leaf_value = 0
+                prior_dict = {move: 0.05 for move in node.board.legal_moves}
+                node.expand(prior_dict)
+            
+            self._backpropogate(edge_path, leaf_value)
 
-    def _get_best_edge(self, node: Node, parent_N: int):
-        edge_UCTs = [edge.get_UCT(parent_N) for edge in node.edges]
-        return node.edges[edge_UCTs.index(max(edge_UCTs))]
+
+    def _backpropogate(self, edge_path: list[Edge], leaf_value: float):
+        v = leaf_value
+        for edge in reversed(edge_path):
+            edge.N += 1
+            edge.W += v
+            v = -v  # flip persepective
