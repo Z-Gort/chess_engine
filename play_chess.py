@@ -1,5 +1,4 @@
 import chess
-import random
 from mcts import MCTS, Node
 
 root = Node(chess.Board())

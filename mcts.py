@@ -1,5 +1,8 @@
 from chess import Board, Move, WHITE
 import math
+import AlphaZeroNetwork
+import torch
+import encoder
 
 
 def pv_uniform_zero(board):
@@ -57,9 +60,24 @@ class Edge:
 
 class MCTS:
     def __init__(self, node: Node):
+        alphaZeroNet = AlphaZeroNetwork.AlphaZeroNet(20, 256)
+        modelFile = "weights/AlphaZeroNet_20x256.pt"
+        weights = torch.load(modelFile, map_location=torch.device("cpu"))
+
+        alphaZeroNet.load_state_dict(weights)
+        for param in alphaZeroNet.parameters():
+            param.requires_grad = False
+        alphaZeroNet.eval()
         # self.expand(dirichlet_noise_dict)--for training. will want to initialize edges from root to have dirichlet noise in prior probabilities
-        self.fn = pv_uniform_zero  # TODO
+        self.network = alphaZeroNet
         self.root = node
+
+    def fn(self, board):
+        """Wrapper to call the network with proper encoding/decoding"""
+        value, move_probs = encoder.callNeuralNetwork(board, self.network)
+        moves = list(board.legal_moves)
+        prior_dict = {move: float(move_probs[i]) for i, move in enumerate(moves)}
+        return prior_dict, float(value)
 
     def make_move(self, move: Move):
         for edge in self.root.edges:
@@ -73,9 +91,9 @@ class MCTS:
         # if edge not explored in root (first move or no simulations)
         b2 = self.root.board.copy()
         b2.push(move)
-        self.root =Node(b2)
+        self.root = Node(b2)
 
-    def think_and_move(self, simulations: int): # simulations MUST be at least 1
+    def think_and_move(self, simulations: int):  # simulations MUST be at least 1
         self._run_simulations(simulations)
         best_edge = max(self.root.edges, key=lambda e: e.N)
         # Make sure a child exists
@@ -84,6 +102,7 @@ class MCTS:
             b2.push(best_edge.move)
             best_edge.dest = Node(b2)
         self.make_move(best_edge.move)
+        return best_edge.move
 
     def _run_simulations(self, simulations: int):
         for _ in range(simulations):
