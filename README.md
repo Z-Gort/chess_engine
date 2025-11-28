@@ -1,6 +1,6 @@
 # Chess Engine
 
-An AlphaZero-style chess engine combining deep neural networks with Monte Carlo Tree Search (MCTS).
+An AlphaZero-style chess engine combining a DNN with my own implementation of Monte Carlo Tree Search (MCTS).
 
 ## Overview
 
