@@ -21,5 +21,5 @@ while not mcts.root.board.is_game_over():
             mcts.make_move(move)
             break
     else:
-        mcts.think_and_move(simulations=1)
+        mcts.think_and_move(simulations=1000)
     human_turn = not human_turn
